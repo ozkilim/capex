@@ -1,13 +1,8 @@
 "use client";
 
 /**
- * Modular auth layer.
- *
- * Today this is a mock provider backed by localStorage so the whole app runs
- * with no credentials. To switch to real Google OAuth later, replace the body
- * of `signInWithGoogle` / `signOut` / session bootstrapping with NextAuth (or
- * any provider) — the `AuthContextValue` interface and every consumer stay the
- * same.
+ * Auth layer backed by Supabase. The AuthContextValue interface is unchanged
+ * from the original mock, so every consumer keeps working.
  */
 
 import {
@@ -18,6 +13,8 @@ import {
   useMemo,
   useState,
 } from "react";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/client";
 
 export interface User {
   id: string;
@@ -34,66 +31,66 @@ export interface AuthContextValue {
   signOut: () => Promise<void>;
 }
 
-const STORAGE_KEY = "capex.session";
-
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function loadStoredUser(): User | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as User) : null;
-  } catch {
-    return null;
-  }
-}
-
-function persistUser(user: User | null) {
-  if (typeof window === "undefined") return;
-  if (user) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-  else window.localStorage.removeItem(STORAGE_KEY);
+function mapUser(u: SupabaseUser | null): User | null {
+  if (!u) return null;
+  const meta = (u.user_metadata ?? {}) as Record<string, string | undefined>;
+  return {
+    id: u.id,
+    name:
+      meta.full_name ||
+      meta.name ||
+      (u.email ? u.email.split("@")[0] : "User"),
+    email: u.email ?? "",
+    avatarUrl: meta.avatar_url,
+  };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const supabase = useMemo(() => createClient(), []);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setUser(loadStoredUser());
-    setLoading(false);
-  }, []);
-
-  const setSession = useCallback((next: User | null) => {
-    persistUser(next);
-    setUser(next);
-  }, []);
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setUser(mapUser(data.session?.user ?? null));
+      setLoading(false);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(mapUser(session?.user ?? null));
+    });
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, [supabase]);
 
   const signInWithGoogle = useCallback(async () => {
-    // MOCK: pretend a Google popup returned a profile. Swap for NextAuth later.
-    await new Promise((r) => setTimeout(r, 600));
-    setSession({
-      id: "mock-google-user",
-      name: "Alex Morgan",
-      email: "alex@capex.dev",
-      avatarUrl: undefined,
+    await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
+      },
     });
-  }, [setSession]);
+  }, [supabase]);
 
   const signInWithEmail = useCallback(
-    async (email: string, _password: string) => {
-      await new Promise((r) => setTimeout(r, 500));
-      setSession({
-        id: "mock-email-user",
-        name: email.split("@")[0] || "User",
+    async (email: string, password: string) => {
+      const { error } = await supabase.auth.signInWithPassword({
         email,
+        password,
       });
+      if (error) throw error;
     },
-    [setSession]
+    [supabase]
   );
 
   const signOut = useCallback(async () => {
-    setSession(null);
-  }, [setSession]);
+    await supabase.auth.signOut();
+  }, [supabase]);
 
   const value = useMemo<AuthContextValue>(
     () => ({ user, loading, signInWithGoogle, signInWithEmail, signOut }),

@@ -1,24 +1,63 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PageHeader, CopyBlock } from "@/components/dashboard";
+import { useAuth } from "@/lib/auth";
 
-function generateToken() {
-  const rand = Array.from({ length: 32 }, () =>
-    "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]
-  ).join("");
-  return `cpx_sk_${rand}`;
-}
+type TokenMeta = {
+  id: string;
+  name: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked: boolean;
+};
 
 export default function TokenPage() {
-  const [token] = useState(generateToken);
-  const [revealed, setRevealed] = useState(false);
-  const [connected, setConnected] = useState(false);
+  const { user, loading: authLoading } = useAuth();
+  const [freshToken, setFreshToken] = useState<string | null>(null);
+  const [tokens, setTokens] = useState<TokenMeta[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const masked = useMemo(
-    () => `cpx_sk_${"•".repeat(32)}`,
-    []
-  );
+  const refresh = useCallback(async () => {
+    const res = await fetch("/api/tokens");
+    if (!res.ok) return;
+    const json = await res.json();
+    setTokens(json.tokens ?? []);
+  }, []);
+
+  useEffect(() => {
+    if (user) refresh();
+  }, [user, refresh]);
+
+  const generate = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/tokens", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to create token");
+      setFreshToken(json.token);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to create token");
+    } finally {
+      setBusy(false);
+    }
+  }, [refresh]);
+
+  const hasToken = tokens.length > 0;
+
+  if (!authLoading && !user) {
+    return (
+      <>
+        <PageHeader title="Token / Connect" />
+        <div className="p-8 text-sm text-muted">
+          Please sign in to generate a CAPEX token.
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -31,48 +70,62 @@ export default function TokenPage() {
               Connect Claude Code to CAPEX
             </h2>
             <p className="mt-1 text-sm text-muted">
-              Use your CAPEX token to route Claude Code through our system for
-              smart search, batch edits, and savings.
+              Link your machine so your local savings show up here in your
+              dashboard.
             </p>
           </div>
 
           <Step n={1} title="Install the plugin">
-            <CopyBlock code="claude plugin install capex" />
-          </Step>
-
-          <Step n={2} title="Get your token">
-            <CopyBlock code={revealed ? token : masked} />
-            <div className="mt-3 flex gap-2">
-              <button
-                onClick={() => setRevealed((r) => !r)}
-                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted transition hover:bg-surface-2 hover:text-white"
-              >
-                {revealed ? "Hide" : "Reveal"}
-              </button>
-              <button className="rounded-md border border-border px-3 py-1.5 text-xs text-muted transition hover:bg-surface-2 hover:text-white">
-                Regenerate
-              </button>
-            </div>
+            <CopyBlock code="/plugin marketplace add ozkilim/capex-plugin" />
+            <div className="mt-2" />
+            <CopyBlock code="/plugin install capex@capex-marketplace" />
             <p className="mt-2 text-xs text-muted">
-              Keep this secret. Treat it like a password.
+              Run these inside Claude Code, then restart it.
             </p>
           </Step>
 
+          <Step n={2} title="Generate your token">
+            {freshToken ? (
+              <>
+                <CopyBlock code={freshToken} />
+                <p className="mt-2 text-xs text-amber-400">
+                  Copy it now — for security it won&apos;t be shown again. Lost
+                  it? Just generate a new one.
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-muted">
+                {hasToken
+                  ? "You already have a token. Generate a new one if you've lost it (the old one keeps working until you revoke it)."
+                  : "Generate a personal access token to link Claude Code."}
+              </p>
+            )}
+            <div className="mt-3 flex gap-2">
+              <button
+                onClick={generate}
+                disabled={busy}
+                className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-accent-600 disabled:opacity-50"
+              >
+                {busy ? "Generating…" : hasToken ? "Generate new token" : "Generate token"}
+              </button>
+            </div>
+            {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+          </Step>
+
           <Step n={3} title="Authenticate">
-            <CopyBlock code={`claude config set capex.token ${revealed ? token : "<your-token>"}`} />
+            <CopyBlock
+              code={`/capex-login --token ${freshToken ?? "<your-token>"}`}
+            />
             <p className="mt-2 text-xs text-muted">
-              Paste your token when prompted, or run the command above.
+              Run this inside Claude Code with the token from step 2.
             </p>
           </Step>
 
           <Step n={4} title="Verify connection">
-            <CopyBlock code="claude capex status" />
-            <button
-              onClick={() => setConnected(true)}
-              className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-accent-600"
-            >
-              Test connection
-            </button>
+            <CopyBlock code="/capex-savings" />
+            <p className="mt-2 text-xs text-muted">
+              Your savings sync here automatically after each session.
+            </p>
           </Step>
         </div>
 
@@ -82,30 +135,44 @@ export default function TokenPage() {
             <div className="mt-4 flex items-center gap-2 text-sm">
               <span
                 className={`h-2.5 w-2.5 rounded-full ${
-                  connected ? "bg-emerald-400" : "bg-gray-500"
+                  hasToken ? "bg-emerald-400" : "bg-gray-500"
                 }`}
               />
-              {connected ? "Connected" : "Not connected"}
+              {hasToken ? "Linked" : "Not linked"}
             </div>
             <div className="mt-3 text-xs text-muted">
-              {connected ? "Last sync: just now" : "No sync yet"}
+              {tokens[0]?.last_used_at
+                ? `Last sync: ${new Date(tokens[0].last_used_at).toLocaleString()}`
+                : "No sync yet"}
             </div>
           </div>
 
           <div className="card p-6">
-            <h3 className="font-semibold">Quick stats</h3>
-            <dl className="mt-4 space-y-3 text-sm">
-              <div className="flex justify-between">
-                <dt className="text-muted">Calls routed</dt>
-                <dd className="font-mono">{connected ? "1,284" : "0"}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-muted">Tokens saved</dt>
-                <dd className="font-mono text-accent">
-                  {connected ? "3.2M" : "0"}
-                </dd>
-              </div>
-            </dl>
+            <h3 className="font-semibold">Your tokens</h3>
+            <ul className="mt-4 space-y-3 text-sm">
+              {tokens.length === 0 && (
+                <li className="text-muted">No tokens yet.</li>
+              )}
+              {tokens.map((t) => (
+                <li key={t.id} className="flex items-center justify-between gap-2">
+                  <span className="truncate">
+                    {t.name}
+                    <span className="ml-2 text-xs text-muted">
+                      {new Date(t.created_at).toLocaleDateString()}
+                    </span>
+                  </span>
+                  <button
+                    onClick={async () => {
+                      await fetch(`/api/tokens/${t.id}`, { method: "DELETE" });
+                      refresh();
+                    }}
+                    className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted transition hover:bg-surface-2 hover:text-white"
+                  >
+                    Revoke
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
       </div>
