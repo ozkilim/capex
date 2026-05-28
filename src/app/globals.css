@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0a0a12;
+  --color-surface: #11111d;
+  --color-surface-2: #161627;
+  --color-border: #24243a;
+  --color-muted: #9a9ab5;
+  --color-accent: #7c5cff;
+  --color-accent-600: #6a45ff;
+  --color-accent-700: #5a37e0;
+  --font-sans: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, "SFMono-Regular", monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: var(--color-ink);
+  color: #f4f4f8;
+  font-family: var(--font-sans);
+}
+
+/* Codey display treatment: tighten headings + brand */
+h1,
+h2,
+h3 {
+  letter-spacing: -0.02em;
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+.glow {
+  background-image: radial-gradient(
+      60% 60% at 50% 0%,
+      rgba(124, 92, 255, 0.18) 0%,
+      rgba(124, 92, 255, 0) 70%
+    ),
+    radial-gradient(
+      40% 40% at 80% 20%,
+      rgba(124, 92, 255, 0.12) 0%,
+      rgba(124, 92, 255, 0) 70%
+    );
+}
+
+.card {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-up {
+  animation: fadeUp 0.5s ease both;
+}
